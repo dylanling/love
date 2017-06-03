@@ -1,7 +1,11 @@
-from abc import ABCMeta, abstractmethod
+import logging
+
 from itertools import cycle
+from functools import reduce
 from random import shuffle
-from pprint import pprint
+from pprint import pformat as format
+
+from players import DumbPlayer, ConservativePlayer
 
 class Card:
     SUITS = ['c', 'd', 's', 'h']
@@ -19,37 +23,14 @@ class Card:
     def __repr__(self):
         return str(self)
 
+    def hearts_points(self):
+        if self.value is 10 and self.suit is 's':
+            return 13
+        return 1 if self.suit is 'h' else 0
+
     @staticmethod
     def deck():
         return [Card(value, suit) for value in range(13) for suit in Card.SUITS]
-
-class Player(metaclass=ABCMeta):
-    def __init__(self, name):
-        self.name = name
-
-    def __str__(self):
-        return self.name
-
-    def __repr__(self):
-        return str(self)
-
-    @abstractmethod
-    def move(self, game):
-        raise NotImplementedError
-
-    @abstractmethod
-    def pass_cards(self, game):
-        raise NotImplementedError
-
-class DumbPlayer(Player):
-    def __init__(self, name):
-        super().__init__(name)
-
-    def move(self, game):
-        return game.round.hands[self][0]
-
-    def pass_cards(self, game):
-        return game.round.hands[self][:3]
 
 class Game:
     def __init__(self, players):
@@ -58,7 +39,12 @@ class Game:
         self.players = players
         self.scores  = {player:0 for player in players}
         self.targets = cycle([self.left_targets(), self.right_targets(), self.cross_targets(), self.self_targets()])
-        self.round = Round(players, next(self.targets))
+        # define these here so they are public to players
+        self.captured  = {} # <Player, List<Card>>
+        self.broken = False
+        self.hands = {} # <Player, List<Card>>
+        self.active = None
+        self.pile = [] # <Tuple<Card, Player>>
 
     def left_targets(self):
         return {self.players[i]:self.players[i-1] for i in range(4)}
@@ -71,42 +57,86 @@ class Game:
 
     def self_targets(self):
         return {player:player for player in self.players}
-        
-# TODO: move out pass targets from round, all player logic should be invoked from Game
-class Round:
-    def __init__(self, players, pass_targets):
-        if (len(players) != 4 or [player for player in players if player not in pass_targets] or 
-            [player for player in players if player not in pass_targets.values()]):
-            raise ValueError('Invalid inputs to round of Hearts')
-        self.players = players
-        self.pass_targets = pass_targets
-        self.captured  = {player:[] for player in players}
-        self.broken = False
-        self.hands, self.active = self.initial_hands_and_player()
-        self.pile = []
 
-    def initial_hands_and_player(self):
+    def fresh_hands(self):
         deck = Card.deck()
         shuffle(deck)
-        cards = {self.players[i]:deck[13*i:13*(i+1)] for i in range(len(self.players))}
-        first = [player for player in cards if [card for card in cards[player] if card.value == 0 and card.suit == Card.SUITS[0]]][0]
-        return cards, first
+        return {self.players[i]:deck[(len(deck)//len(self.players))*i:(len(deck)//len(self.players))*(i+1)] for i in range(len(self.players))}
 
-    def is_complete(self):
-        return not self.hands[self.active]
-
-    def advance(self, card):
-        self.cards[self.active].remove(card)
+    def advance(self):
+        card = self.active.move(self)
+        logging.debug(str(self.active) + ' plays ' + str(card))
+        if not self.broken and card.hearts_points() > 0:
+            logging.debug('Hearts broken')
+            self.broken = True
+        self.hands[self.active].remove(card)
         self.pile.append((card, self.active))
         if len(self.pile) == len(self.players):
+            logging.debug('Pile is :' + format(self.pile))
             capture = reduce(lambda a, b: b if b[0].suit == a[0].suit and b[0].value > a[0].value else a, self.pile)
-            self.captured[capture[1]].append(capture[0])
+            logging.debug('Capture is: ' + format(capture))
+            self.captured[capture[1]] += [tup[0] for tup in self.pile]
             self.active = capture[1]
+            self.pile = []
+        else:
+            self.active = self.players[self.players.index(self.active)-1]
 
-players = [DumbPlayer(name) for name in ['Alice', 'Bob', 'Charlie', 'Daniel']]
-game = Game(players)
-pprint(game.round.pass_targets)
-pprint(game.round.hands)
-pprint(game.round.active)
-pprint(players[0].pass_cards(game))
-pprint(players[0].move(game))
+    def is_legal(self, card):
+        if self.pile:
+            return card.suit is self.pile[0][0].suit or not [card for card in self.hands[self.active] if card.suit is self.pile[0][0].suit]
+        else:
+            if len(self.hands[self.active]) is 52 // len(self.hands):
+                return card.suit is 'c' and card.value is 0
+            return card.hearts_points() is 0 or (self.broken or not [card for card in self.hands[self.active] if card.hearts_points() is 0])
+
+    def play_round(self, target_map):
+        logging.debug('=== Beginning next round ===\nCurrent scores are:\n' + format(self.scores))
+        
+        self.captured  = {player:[] for player in self.players}
+        self.hands = self.fresh_hands()
+        self.pile = []
+        self.broken = False
+
+        logging.debug('Current hands before passing are:\n' + format(self.hands))
+
+        passed = {player:player.pass_cards(self, target_map) for player in target_map}
+        for player in passed:
+            for card in passed[player]:
+                self.hands[player].remove(card)
+        for player in passed:
+            self.hands[target_map[player]] += passed[player]
+
+        self.active = [player for player in self.hands if [card for card in self.hands[player] if card.value == 0 and card.suit == Card.SUITS[0]]][0]
+
+        logging.debug('Current hands after passing are:\n' + format(self.hands))
+
+        while self.hands[self.active]:
+            self.advance()
+
+        self.update_points()
+
+    def update_points(self):
+        round_points = {player:sum(map(lambda c: c.hearts_points(), self.captured[player])) for player in self.captured}
+        moon_shooter = [player for player in round_points if round_points[player] == 26]
+        for player in self.scores:
+            if not moon_shooter:
+                self.scores[player] += round_points[player]
+            elif moon_shooter and player is not moon_shooter[0]:
+                self.scores[player] += 30
+
+    def play_game(self):
+        for target_map in self.targets:
+            self.play_round(target_map)
+            if [player for player in self.scores if self.scores[player] >= 100]:
+                return self.scores
+
+def main():
+    logging.basicConfig(level=logging.INFO)
+    players = [DumbPlayer(name) for name in ['Alice', 'Bob', 'Charlie']] + [ConservativePlayer('Daniel')]
+    game = Game(players)
+    logging.info('Scores: ' + format(game.play_game()))
+
+if __name__ == '__main__':
+    main()
+
+
