@@ -5,8 +5,6 @@ from functools import reduce
 from random import shuffle
 from pprint import pformat as format
 
-from players import DumbPlayer, ConservativePlayer
-
 class Card:
     SUITS = ['c', 'd', 's', 'h']
     RANKS = {12: 'A', 11: 'K', 10: 'Q', 9: 'J', 8: 'T'}
@@ -129,14 +127,4 @@ class Game:
             self.play_round(target_map)
             if [player for player in self.scores if self.scores[player] >= 100]:
                 return self.scores
-
-def main():
-    logging.basicConfig(level=logging.INFO)
-    players = [DumbPlayer(name) for name in ['Alice', 'Bob', 'Charlie']] + [ConservativePlayer('Daniel')]
-    game = Game(players)
-    logging.info('Scores: ' + format(game.play_game()))
-
-if __name__ == '__main__':
-    main()
-
 

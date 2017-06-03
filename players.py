@@ -53,7 +53,3 @@ class ConservativePlayer(Player):
         sort_key = lambda card: (card.hearts_points(), card.value, ConservativePlayer.SUIT_ORDER.index(card.suit))
         return sorted(hand, key=sort_key)
 
-
-
-
-
