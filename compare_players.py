@@ -1,11 +1,16 @@
 import logging
 
-from players import DumbPlayer, ConservativePlayer
+from players import DumbPlayer, ConservativePlayer, MoonShooter
 from hearts import Game
 
 def main():
     logging.basicConfig(level=logging.INFO)
-    players = [DumbPlayer(name) for name in ['Dummy1', 'Dummy2', 'Dummy3']] + [ConservativePlayer('Conservative1')]
+    players = [
+        ConservativePlayer('Conservative1'),
+        ConservativePlayer('Conservative2'),
+        ConservativePlayer('Conservative3'),
+        MoonShooter('MoonShooter1')
+    ]
 
     losses = {player:0 for player in players}
 

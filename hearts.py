@@ -33,28 +33,24 @@ class Card:
 class Game:
     def __init__(self, players):
         if len(players) != 4:
-            raise ValueError('Game requires four players')
+            raise ValueError('Game requires four players right now')
         self.players = players
         self.scores  = {player:0 for player in players}
-        self.targets = cycle([self.left_targets(), self.right_targets(), self.cross_targets(), self.self_targets()])
+        self.targets = cycle(self.target_maps())
+
         # define these here so they are public to players
         self.captured  = {} # <Player, List<Card>>
-        self.broken = False
         self.hands = {} # <Player, List<Card>>
-        self.active = None
         self.pile = [] # <Tuple<Card, Player>>
+        self.broken = False
+        self.active = None
 
-    def left_targets(self):
-        return {self.players[i]:self.players[i-1] for i in range(4)}
-
-    def right_targets(self):
-        return {self.players[i-1]:self.players[i] for i in range(4)}
-
-    def cross_targets(self):
-        return {self.players[i]:self.players[(i+2)%4] for i in range(4)}
-
-    def self_targets(self):
-        return {player:player for player in self.players}
+    def target_maps(self):
+        num_players = len(self.players)
+        return [{self.players[i]:self.players[i-1] for i in range(num_players)},
+                {self.players[i-1]:self.players[i] for i in range(num_players)},
+                {self.players[i]:self.players[(i+(num_players // 2)) % num_players] for i in range(num_players)},
+                {player:player for player in self.players}]
 
     def fresh_hands(self):
         deck = Card.deck()
@@ -85,7 +81,7 @@ class Game:
         else:
             if len(self.hands[self.active]) is 52 // len(self.hands):
                 return card.suit is 'c' and card.value is 0
-            return card.hearts_points() is 0 or (self.broken or not [card for card in self.hands[self.active] if card.hearts_points() is 0])
+            return card.hearts_points() is not 1 or (self.broken or not [card for card in self.hands[self.active] if card.hearts_points() is 0])
 
     def play_round(self, target_map):
         logging.debug('=== Beginning next round ===\nCurrent scores are:\n' + format(self.scores))
@@ -116,6 +112,8 @@ class Game:
     def update_points(self):
         round_points = {player:sum(map(lambda c: c.hearts_points(), self.captured[player])) for player in self.captured}
         moon_shooter = [player for player in round_points if round_points[player] == 26]
+        if moon_shooter:
+            logging.debug(str(moon_shooter[0]) + ' shot the moon!')
         for player in self.scores:
             if not moon_shooter:
                 self.scores[player] += round_points[player]
@@ -123,8 +121,10 @@ class Game:
                 self.scores[player] += 30
 
     def play_game(self):
+        logging.debug('===== STARTING GAME =====')
         for target_map in self.targets:
             self.play_round(target_map)
-            if [player for player in self.scores if self.scores[player] >= 100]:
+            logging.debug('Scores are: ' + format(self.scores)) 
+            if [player for player in self.scores if self.scores[player] >= 100]: 
                 return self.scores
 
